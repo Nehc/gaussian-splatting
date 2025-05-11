@@ -1,0 +1,6 @@
+tqdm
+opencv-python
+plyfile
+pytube
+gunicorn
+flask 

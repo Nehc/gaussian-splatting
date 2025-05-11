@@ -1,8 +1,9 @@
 *.pyc
 .vscode
 output
-build
-diff_rasterization/diff_rast.egg-info
+**/build
+**/diff_rasterization/diff_rast.egg-info
+**/simple-knn/simple_knn.egg-info
 diff_rasterization/dist
 tensorboard_3d
 screenshots
