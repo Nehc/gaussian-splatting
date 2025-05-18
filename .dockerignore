@@ -1,3 +1,5 @@
 .venv/**
 output/**
+Data/**
 **/build
+docker-compose.yml

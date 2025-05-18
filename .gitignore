@@ -1,3 +1,4 @@
+.env
 *.pyc
 .vscode
 output
@@ -7,3 +8,5 @@ output
 diff_rasterization/dist
 tensorboard_3d
 screenshots
+Data
+docker-compose.yml
