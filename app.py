@@ -1,5 +1,5 @@
-from flask import Flask, request, jsonify 
-import os, subprocess, glob 
+from flask import Flask, request, jsonify, send_file, render_template 
+import os, subprocess, glob, datetime 
 from shortuuid import uuid
 from splat import ply_to_splat
 from v_utils import split_video
@@ -16,9 +16,9 @@ if not token:
 
 bot = telebot.TeleBot(token)
 
-BASE_DIR = 'Data'
-SPLAT_DIR = 'Splats'
-VIEW_URL = "https://wald.beirel.ru:44443/splat/?url=splats/{}.splat#"
+BASE_DIR = token = os.getenv('BASE_DIR')
+SPLAT_DIR = token = os.getenv('SPLAT_DIR')
+VIEW_URL = token = os.getenv('VIEW_URL')
 
 tasks_lock = Lock()
 gaussing_lock = Lock()
@@ -38,17 +38,17 @@ def process_video(message):
         current = os.path.join(BASE_DIR, task_id)
         os.makedirs(current, exist_ok=True)
         fl_name = message.video.file_unique_id + '.mp4'
-        input_file_path = os.path.join(current, fl_name)
-        file_info = bot.get_file(message.document.file_id)
+        file_info = bot.get_file(message.video.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
+        input_file_path = os.path.join(current, fl_name)
         with open(input_file_path, 'wb') as f: 
             f.write(downloaded_file)
-        file4file = os.path.join(current, 'filename')
-        with open(file4file, 'w') as f:
-            f.write(input_file_path)
-        file4chat_id = os.path.join(current, 'chat_id')
-        with open(file4chat_id, 'w') as f:
+        with open(os.path.join(current, 'filename'), 'w') as f:
+            f.write(fl_name)
+        with open(os.path.join(current, 'chat_id'), 'w') as f:
             f.write(str(message.chat.id))
+        with open(os.path.join(current, 'created_at'), 'w') as f:
+            f.write(datetime.datetime.now().isoformat())
         update_status(task_id, 'created')
         
         thread = Thread(target=split_task, args=(task_id, ))
@@ -56,7 +56,7 @@ def process_video(message):
 
         bot.reply_to(message,"Начал обработку, вернусь позже...")
     except Exception as e:
-        bot.reply_to(message, str(e)+str(message))
+        bot.reply_to(message, str(e))
 
 
 # Инициализация задач при запуске
@@ -74,7 +74,12 @@ def init_tasks():
                 if os.path.exists(error_file):
                     with open(error_file, 'r') as f:
                         error = f.read()
-                tasks[task_id] = {'status': status, 'error': error}
+                created_at_file = os.path.join(task_dir, 'created_at')
+                created_at = 'N/A'
+                if os.path.exists(created_at_file):
+                    with open(created_at_file, 'r') as f:
+                        created_at = f.read()
+                tasks[task_id] = {'status': status, 'error': error, 'created_at': created_at}
     return tasks
 
 
@@ -111,11 +116,12 @@ def process_file():
         os.makedirs(current, exist_ok=True)
         input_file_path = os.path.join(current, file.filename)
         file.save(input_file_path)
-        file4file = os.path.join(current, 'filename')
-        with open(file4file, 'w') as f:
-            f.write(input_file_path)
+        with open(os.path.join(current, 'filename'), 'w') as f:
+            f.write(file.filename)
+        with open(os.path.join(current, 'created_at'), 'w') as f:
+            f.write(datetime.datetime.now().isoformat())
         update_status(task_id, 'created')
-        
+
         thread = Thread(target=split_task, args=(task_id, ))
         thread.start()
         
@@ -130,7 +136,7 @@ def split_task(task_id):
     file4file = os.path.join(current, 'filename')
     try:
         with open(file4file, 'r') as f:
-            input_file_path = f.read()
+            input_file_path = os.path.join(current, f.read())
         update_status(task_id, 'split')
         input_dir = os.path.join(current, 'input')
         os.makedirs(input_dir, exist_ok=True)
@@ -145,6 +151,7 @@ def split_task(task_id):
 
 
 def convert_task(task_id):
+    global current_gaussing
     current = os.path.join(BASE_DIR, task_id)
     try:
         update_status(task_id, 'convert')
@@ -213,27 +220,32 @@ def splatting_task(task_id):
         update_status(task_id, 'error', str(e))
 
 
+@app.route('/')
+def index():
+    return render_template('index.html') # app.send_static_file('index.html')
+
+
 @app.route('/status/<task_id>')
 def check_status(task_id):
     task_dir = os.path.join(BASE_DIR, task_id)
     if not os.path.exists(task_dir):
         return jsonify({'status': 'not_found'}), 404
         
+    # Получаем информацию о задаче
     status_file = os.path.join(task_dir, 'status')
     error_file = os.path.join(task_dir, 'error')
+    created_at_file = os.path.join(task_dir, 'created_at')
     
-    if not os.path.exists(status_file):
-        return jsonify({'status': 'no_status'})
-        
-    with open(status_file, 'r') as f:
-        status = f.read().strip()
-        
-    error = ''
-    if os.path.exists(error_file):
-        with open(error_file, 'r') as f:
-            error = f.read()
-            
-    return jsonify({'status': status, 'error': error})
+    status = open(status_file, 'r').read().strip() if os.path.exists(status_file) else 'unknown'
+    error = open(error_file, 'r').read() if os.path.exists(error_file) else ''
+    created_at = open(created_at_file, 'r').read() if os.path.exists(created_at_file) else 'N/A'
+    
+    return jsonify({
+        'task_id': task_id,
+        'status': status,
+        'error': error,
+        'created_at': created_at
+    })
 
 
 @app.route('/tasks')
@@ -246,12 +258,29 @@ def list_tasks():
             if os.path.exists(status_file):
                 with open(status_file, 'r') as f:
                     status = f.read().strip()
+                if status == 'deleted':  # Исключаем удаленные задачи
+                    continue
                 error_file = os.path.join(task_dir, 'error')
                 error = ''
                 if os.path.exists(error_file):
                     with open(error_file, 'r') as f:
                         error = f.read()
-                result.append({'task_id': task_id, 'status': status, 'error': error})
+                created_at_file = os.path.join(task_dir, 'created_at')
+                created_at = 'N/A'
+                if os.path.exists(created_at_file):
+                    with open(created_at_file, 'r') as f:
+                        created_at = f.read()
+                # Добавляем URL если задача завершена
+                splat_path = os.path.join(SPLAT_DIR, f"{task_id}.splat")
+                url = VIEW_URL.format(task_id) if os.path.exists(splat_path) else None
+                
+                result.append({
+                    'task_id': task_id, 
+                    'status': status, 
+                    'error': error,
+                    'created_at': created_at,
+                    'url': url
+                })
     return jsonify(result)
 
 
@@ -305,6 +334,64 @@ def manual_splatting(task_id):
         
     except Exception as e:
         return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+@app.route('/delete/<task_id>')
+def delete_task(task_id):
+    task_dir = os.path.join(BASE_DIR, task_id)
+    if not os.path.exists(task_dir):
+        return jsonify({'error': 'Task not found'}), 404
+    
+    update_status(task_id, 'deleted')
+    return jsonify({'status': 'deleted'})
+
+
+@app.route('/download/<task_id>')
+def download_ply(task_id):
+    task_dir = os.path.join(BASE_DIR, task_id)
+    ply_path = os.path.join(task_dir, 'output', 'point_cloud', 'iteration_30000', 'point_cloud.ply')
+    
+    if not os.path.exists(ply_path):
+        return jsonify({'error': 'File not found'}), 404
+        
+    return send_file(ply_path, as_attachment=True, download_name='point_cloud.ply')
+
+
+@app.route('/rename/<task_id>', methods=['POST'])
+def rename_task(task_id):
+    task_dir = os.path.join(BASE_DIR, task_id)
+    if not os.path.exists(task_dir):
+        return jsonify({'error': 'Task not found'}), 404
+    
+    data = request.json
+    if 'new_task_id' not in data:
+        return jsonify({'error': 'New task ID not provided'}), 400
+    
+    new_task_id = data['new_task_id']
+    new_task_dir = os.path.join(BASE_DIR, new_task_id)
+    
+    if os.path.exists(new_task_dir):
+        return jsonify({'error': 'New task ID already exists'}), 400
+    
+    try:
+        os.rename(task_dir, new_task_dir)
+        
+        # Update related files and status
+        splat_path = os.path.join(SPLAT_DIR, f"{task_id}.splat")
+        new_splat_path = os.path.join(SPLAT_DIR, f"{new_task_id}.splat")
+        if os.path.exists(splat_path):
+            os.rename(splat_path, new_splat_path)
+        
+        # Update tasks dictionary
+        with tasks_lock:
+            task_info = tasks.pop(task_id, None)
+            if task_info:
+                tasks[new_task_id] = task_info
+        
+        return jsonify({'task_id': new_task_id, 'status': 'renamed'}), 200
+    
+    except Exception as e:
+        return jsonify({"error": f"Failed to rename task: {str(e)}"}), 500
 
 
 def run_telegram_bot():
