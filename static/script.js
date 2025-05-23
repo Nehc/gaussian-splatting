@@ -51,8 +51,15 @@ document.addEventListener('DOMContentLoaded', function () {
                         <td>${task.task_id}</td>
                         <td>${task.created_at}</td>
                         <td>${task.status}</td>
-                        <td>${task.status === 'completed' ? `<a href="${task.url}" target="_blank">Посмотреть</a>` : ''}</td>
+                        <td>${task.status === 'completed' ? `
+                            <a href="#" onclick="showInViewer('${task.url}')">Посмотреть</a>
+                            <a href="#" onclick="showInViewer('https://wald.beirel.ru:44443/splat/?url=splats/${task.task_id}_crop.splat#')">Croped</a>
+                        ` : ''}</td> 
                         <td>
+                        ${task.status === 'completed' ? `
+                            <input type="range" class="quantile-slider" min="0.1" max="0.9" step="0.05" value="0.25" data-task-id="${task.task_id}">
+                            <button onclick="cropSplat('${task.task_id}')">CROP</button>
+                        ` : ''}
                             <button onclick="manualSplit('${task.task_id}')">Split</button>
                             <button onclick="manualConvert('${task.task_id}')">Convert</button>
                             <button onclick="manualGaussing('${task.task_id}')">Gaussing</button>
@@ -66,6 +73,27 @@ document.addEventListener('DOMContentLoaded', function () {
                     tasksTableBody.appendChild(row);
                 });
             });
+    }
+
+    // Добавим функцию для управления фреймом
+    window.showInViewer = function(url){
+        const viewer = document.getElementById('splatViewer');
+        viewer.src = url;
+        
+        // Дополнительно: кнопка закрытия
+        if (!document.querySelector('.close-viewer-btn')) {
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'close-viewer-btn';
+            closeBtn.innerHTML = '× Закрыть';
+            closeBtn.style.position = 'absolute';
+            closeBtn.style.right = '20px';
+            closeBtn.style.top = '20px';
+            closeBtn.onclick = () => {
+                viewer.src = '';
+                closeBtn.remove();
+            }
+            document.querySelector('.viewer-section').appendChild(closeBtn);
+        }
     }
 
     uploadForm.addEventListener('submit', function (e) {
@@ -109,6 +137,14 @@ document.addEventListener('DOMContentLoaded', function () {
             .then(data => alert(data.status));
     }
 
+    window.cropSplat = function(taskId) {
+        const quantile = document.querySelector(`input[data-task-id="${taskId}"].quantile-slider`).value;
+        
+        fetch(`/splatting/${taskId}/crop?quantile=${quantile}`)
+            .then(response => response.json())
+            .then(data => alert(data.status))
+            .catch(error => console.error('Error:', error));
+    }
     // Обновление задач каждые 60 секунд
     setInterval(fetchTasks, 60000);
     fetchTasks();

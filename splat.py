@@ -1,4 +1,4 @@
-import re
+import re, os
 import numpy as np
 
 def sigmoid(x):
@@ -76,3 +76,51 @@ def ply_to_splat(ply_path):
     ], axis=1)
 
     return result.tobytes()
+
+
+def filter_density_centroid(ply_path, density_quantile=0.75, output_path=None):
+    """Фильтрует точки по расстоянию от центроида плотности и сохраняет новый PLY"""
+    with open(ply_path, 'rb') as f:
+        header = b""
+        while not header.endswith(b'end_header\n'):
+            line = f.readline()
+            header += line
+        
+        # Парсим заголовок
+        header_text = header.decode('utf-8')
+        vertex_count = int(re.search(r'element vertex (\d+)', header_text).group(1))
+        
+        props = re.findall(r'property (\w+) (\w+)', header_text)
+        dtype_map = {'float': 'f4'}
+        np_dtype = [(name, dtype_map[typ]) for typ, name in props]
+        data = np.frombuffer(f.read(), dtype=np_dtype, count=vertex_count)
+
+    # Вычисляем центроид и расстояния
+    centroid = np.mean([data['x'], data['y'], data['z']], axis=1)
+    positions = np.stack([data['x'], data['y'], data['z']], axis=1)
+    distances = np.linalg.norm(positions - centroid, axis=1)
+    
+    # Применяем квантильный фильтр
+    threshold = np.quantile(distances, density_quantile)
+    mask = distances <= threshold
+    
+    filtered_data = data[mask]
+    print(f"Filtered {len(filtered_data)}/{vertex_count} points ({(len(filtered_data)/vertex_count)*100:.1f}%)")
+
+    # Генерируем выходной путь
+    if not output_path:
+        base, ext = os.path.splitext(ply_path)
+        output_path = f"{base}_crop{ext or '.ply'}"
+    
+    # Обновляем заголовок и сохраняем
+    new_header = re.sub(
+        r'element vertex \d+',
+        f'element vertex {len(filtered_data)}', 
+        header_text
+    )
+    
+    with open(output_path, 'wb') as f:
+        f.write(new_header.encode('utf-8'))
+        f.write(filtered_data.tobytes())
+        
+    return output_path

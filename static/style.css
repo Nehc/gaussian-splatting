@@ -27,3 +27,18 @@ button {
     padding: 5px 10px;
     cursor: pointer;
 }
+
+.split-layout {
+    display: grid;
+    grid-template-columns: 40% 60%;
+    gap: 20px;
+}
+
+.viewer-section {
+    position: fixed;
+    right: 0;
+    width: 58%;
+    height: 100vh;
+    background: white;
+    box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+}

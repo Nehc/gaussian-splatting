@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_file, render_template 
 import os, subprocess, glob, datetime 
 from shortuuid import uuid
-from splat import ply_to_splat
+from splat import ply_to_splat, filter_density_centroid
 from v_utils import split_video
 from threading import Thread, Lock, Condition
 import telebot
@@ -16,9 +16,10 @@ if not token:
 
 bot = telebot.TeleBot(token)
 
-BASE_DIR = token = os.getenv('BASE_DIR')
-SPLAT_DIR = token = os.getenv('SPLAT_DIR')
-VIEW_URL = token = os.getenv('VIEW_URL')
+BASE_DIR = os.getenv('BASE_DIR')
+SPLAT_DIR = os.getenv('SPLAT_DIR')
+VIEW_URL = os.getenv('VIEW_URL')
+DEST_QUANTILE = float(os.getenv('DEST_QUANTILE'))
 
 tasks_lock = Lock()
 gaussing_lock = Lock()
@@ -205,11 +206,9 @@ def splatting_task(task_id):
         if not os.path.exists(ply_file):
             update_status(task_id, 'error', 'PLY file not found')
             return
-            
         splat_path = os.path.join(SPLAT_DIR, f"{task_id}.splat") #os.path.join(output, "output.splat")
         with open(splat_path, "wb") as f:
             f.write(ply_to_splat(ply_file))
-            
         update_status(task_id, 'completed')
         file4chat_id = os.path.join(current, 'chat_id')
         if os.path.exists(file4chat_id):
@@ -218,6 +217,32 @@ def splatting_task(task_id):
             
     except Exception as e:
         update_status(task_id, 'error', str(e))
+
+
+@app.route('/splatting/<task_id>/crop')
+def manual_cropping(task_id):
+    try:
+        quantile = float(request.args.get('quantile', DEST_QUANTILE))
+        
+        def cropping_task():
+            current = os.path.join(BASE_DIR, task_id)
+            output = os.path.join(current, 'output') 
+            ply_file = os.path.join(output, 'point_cloud', 'iteration_30000', 'point_cloud.ply')
+            
+            if not os.path.exists(ply_file):
+                return
+            
+            filtered_ply = filter_density_centroid(ply_file, quantile)    
+            splat_path = os.path.join(SPLAT_DIR, f"{task_id}_crop.splat")
+            with open(splat_path, "wb") as f:
+                f.write(ply_to_splat(filtered_ply))
+
+        thread = Thread(target=cropping_task)
+        thread.start()
+        return jsonify({'status': 'cropping started', 'quantile': quantile}), 202
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/')
