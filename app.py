@@ -218,31 +218,21 @@ def splatting_task(task_id):
     except Exception as e:
         update_status(task_id, 'error', str(e))
 
-
-@app.route('/splatting/<task_id>/crop')
-def manual_cropping(task_id):
-    try:
-        quantile = float(request.args.get('quantile', DEST_QUANTILE))
-        
-        def cropping_task():
-            current = os.path.join(BASE_DIR, task_id)
-            output = os.path.join(current, 'output') 
-            ply_file = os.path.join(output, 'point_cloud', 'iteration_30000', 'point_cloud.ply')
-            
-            if not os.path.exists(ply_file):
-                return
-            
-            filtered_ply = filter_density_centroid(ply_file, quantile)    
-            splat_path = os.path.join(SPLAT_DIR, f"{task_id}_crop.splat")
-            with open(splat_path, "wb") as f:
-                f.write(ply_to_splat(filtered_ply))
-
-        thread = Thread(target=cropping_task)
-        thread.start()
-        return jsonify({'status': 'cropping started', 'quantile': quantile}), 202
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+def cropping_task(task_id,quantile):
+    current = os.path.join(BASE_DIR, task_id)
+    output = os.path.join(current, 'output') 
+    ply_file = os.path.join(output, 'point_cloud', 'iteration_30000', 'point_cloud.ply')
+    
+    if not os.path.exists(ply_file):
+        return
+    
+    filtered_ply = filter_density_centroid(ply_file, quantile)    
+    splat_path = os.path.join(SPLAT_DIR, f"{task_id}_crop.splat")
+    with open(splat_path, "wb") as f:
+        f.write(ply_to_splat(filtered_ply))
+    with open(os.path.join(current, 'quantile'), 'w') as f:
+        f.write(str(quantile))
+    update_status(task_id, 'croped') 
 
 
 @app.route('/')
@@ -295,16 +285,24 @@ def list_tasks():
                 if os.path.exists(created_at_file):
                     with open(created_at_file, 'r') as f:
                         created_at = f.read()
+                q_file = os.path.join(task_dir, 'quantile')
+                if os.path.exists(q_file):
+                    with open(q_file, 'r') as f:
+                        quantile = float(f.read())
+                else:
+                    quantile = DEST_QUANTILE
                 # Добавляем URL если задача завершена
                 splat_path = os.path.join(SPLAT_DIR, f"{task_id}.splat")
                 url = VIEW_URL.format(task_id) if os.path.exists(splat_path) else None
-                
+                crop_url = url.replace('.splat','_crop.splat') if os.path.exists(splat_path) else None
                 result.append({
                     'task_id': task_id, 
                     'status': status, 
                     'error': error,
                     'created_at': created_at,
-                    'url': url
+                    'url': url,
+                    'crop_url': crop_url,
+                    'quntile': quantile
                 })
     return jsonify(result)
 
@@ -361,6 +359,18 @@ def manual_splatting(task_id):
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
+@app.route('/crop/<task_id>')
+def manual_cropping(task_id):
+    try:
+        quantile = float(request.args.get('quantile', DEST_QUANTILE))
+        thread = Thread(target=cropping_task, args=(task_id, quantile) )
+        thread.start()
+        return jsonify({'status': 'cropping started', 'quantile': quantile}), 202
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/delete/<task_id>')
 def delete_task(task_id):
     task_dir = os.path.join(BASE_DIR, task_id)
@@ -373,9 +383,9 @@ def delete_task(task_id):
 
 @app.route('/download/<task_id>')
 def download_ply(task_id):
+    croped = int(request.args.get('croped', 0))
     task_dir = os.path.join(BASE_DIR, task_id)
-    ply_path = os.path.join(task_dir, 'output', 'point_cloud', 'iteration_30000', 'point_cloud.ply')
-    
+    ply_path = os.path.join(task_dir, 'output', 'point_cloud', 'iteration_30000', 'point_cloud_crop.ply' if croped else 'point_cloud.ply')
     if not os.path.exists(ply_path):
         return jsonify({'error': 'File not found'}), 404
         
@@ -403,10 +413,16 @@ def rename_task(task_id):
         
         # Update related files and status
         splat_path = os.path.join(SPLAT_DIR, f"{task_id}.splat")
+
         new_splat_path = os.path.join(SPLAT_DIR, f"{new_task_id}.splat")
         if os.path.exists(splat_path):
             os.rename(splat_path, new_splat_path)
-        
+
+        file4chat_id = os.path.join(new_task_dir, 'chat_id')
+        if os.path.exists(file4chat_id):
+            with open(file4chat_id, 'r') as f:
+                bot.send_message(f.read(),f"Работа {task_id} переименована в {new_task_id}. Новая ссылка: {VIEW_URL.format(new_task_id)}")
+
         # Update tasks dictionary
         with tasks_lock:
             task_info = tasks.pop(task_id, None)
